@@ -1,0 +1,98 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: golden-suite
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 20 * * *"  # T2: 매일 UTC 20시 (KST 05시)
+    - cron: "0 21 * * *"  # T3: 매일 UTC 21시 (KST 06시)
+
+concurrency:
+  group: golden-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  t1:
+    name: "T1 — PR 스모크"
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TMPDIR: $RUNNER_TEMP
+      NPM_CONFIG_TMP: $RUNNER_TEMP
+      NODE_OPTIONS: '--max-old-space-size=4096'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run T1 suite
+        run: ZIP_DIR=golden/zips/T1 npx tsx golden/scripts/test-runner.ts
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-results-T1
+          path: 'golden/results/result-*.json'
+          if-no-files-found: ignore
+          retention-days: 7
+
+  t2:
+    name: "T2 — 일일 리그레션"
+    if: github.event_name == 'schedule' && github.event.schedule == '0 20 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TMPDIR: $RUNNER_TEMP
+      NPM_CONFIG_TMP: $RUNNER_TEMP
+      NODE_OPTIONS: '--max-old-space-size=4096'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run T2 suite
+        run: ZIP_DIR=golden/zips/T2 npx tsx golden/scripts/test-runner.ts
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-results-T2
+          path: 'golden/results/result-*.json'
+          if-no-files-found: ignore
+          retention-days: 7
+
+  t3:
+    name: "T3 — 야간 풀코퍼스"
+    if: github.event_name == 'schedule' && github.event.schedule == '0 21 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TMPDIR: $RUNNER_TEMP
+      NPM_CONFIG_TMP: $RUNNER_TEMP
+      NODE_OPTIONS: '--max-old-space-size=4096'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run T3 suite
+        run: ZIP_DIR=golden/zips/T3 npx tsx golden/scripts/test-runner.ts
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-results-T3
+          path: 'golden/results/result-*.json'
+          if-no-files-found: ignore
+          retention-days: 7

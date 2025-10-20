@@ -1,0 +1,40 @@
+{
+  "name": "mofix-golden",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm-run-all -p dev:test dev:ui",
+    "dev:test": "tsx golden/scripts/test-runner.ts --loop",
+    "dev:ui": "sh -c \"cd web && npm run dev\"",
+    "golden:gen": "tsx golden/scripts/golden-gen.ts",
+    "golden:run": "tsx golden/scripts/test-runner.ts",
+    "golden:auto": "tsx golden/scripts/test-runner.ts --loop",
+    "golden:ci": "NODE_ENV=ci tsx golden/scripts/test-runner.ts",
+    "golden:diff": "tsx golden/scripts/diff.ts",
+    "golden:run:t1": "ZIP_DIR=golden/zips/T1 npm run golden:run",
+    "golden:run:t2": "ZIP_DIR=golden/zips/T2 npm run golden:run",
+    "golden:run:t3": "ZIP_DIR=golden/zips/T3 npm run golden:run",
+    "golden:report": "jq -r '.results[] | [.file,.framework,(if .ok then \"OK\" else \"FAIL\" end),.installMs,.runMs,.healthMs,.port,.healthUrl] | @tsv' golden/results/*.json | column -t",
+    "golden:clean": "rm -rf golden/zips/T1/*.zip golden/zips/T2/*.zip golden/zips/T3/*.zip golden/results/*.json || true"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "cross-spawn": "^7.0.6",
+    "fast-glob": "^3.3.3",
+    "fs-extra": "^11.3.2",
+    "get-port": "^7.1.0",
+    "kill-port": "^2.0.1",
+    "picocolors": "^1.1.1",
+    "semver": "^7.6.3"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/cross-spawn": "^6.0.6",
+    "@types/kill-port": "^2.0.3",
+    "@types/node": "^24.8.0",
+    "esbuild": "^0.25.11",
+    "npm-run-all": "^4.1.5",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

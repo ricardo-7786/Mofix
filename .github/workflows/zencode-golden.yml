@@ -1,0 +1,36 @@
+# .github/workflows/mofix-golden.yml
+name: mofix-golden
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 18 * * *" # 매일 03:00 KST
+
+jobs:
+  golden:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [18, 20]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install
+        run: npm ci
+
+      - name: Golden run
+        run: npm run golden:ci
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-${{ matrix.os }}-node${{ matrix.node }}
+          path: golden/results/*.json

@@ -1,0 +1,87 @@
+// server.ts
+import http from "http";
+import express from "express";
+import cors from "cors";
+import compression from "compression";
+import morgan from "morgan";
+import { createProxyMiddleware } from "http-proxy-middleware";
+
+/**
+ * MoFix Preview Proxy Server
+ * - Any URL that starts with /preview/:id will be proxied to PREVIEW_TARGET (Next.js dev/preview server)
+ * - We rewrite the path by stripping the leading /preview/:id so Next.js receives canonical paths like /, /_next/*, /assets/*
+ * - Works for static assets, image optimizer, HMR (ws) as well
+ */
+
+const PORT = Number(process.env.PORT || 5000);
+const PREVIEW_PREFIX = "/preview";
+const PREVIEW_TARGET = process.env.PREVIEW_TARGET || "http://127.0.0.1:3000"; // your preview renderer target
+
+const app = express();
+
+// --- middlewares
+app.use(cors());
+app.use(compression());
+app.use(morgan("tiny"));
+
+// health
+app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+
+// --- util: strip `/preview/:id` only once at the head of the path
+const stripPreviewPrefix = (path: string) => {
+  // ^/preview/<anything-but-slash>  -> remove once
+  const rewritten = path.replace(/^\/preview\/[^/]+/, "");
+  // Ensure we never hand empty string to target (serve "/")
+  return rewritten.length === 0 ? "/" : rewritten;
+};
+
+// --- one proxy middleware that handles everything under /preview/:id (HTML, _next, static, ws, etc.)
+const previewProxy = createProxyMiddleware({
+  target: PREVIEW_TARGET,
+  changeOrigin: true,
+  ws: true,
+  secure: false,
+  // Let Next.js receive canonical paths: "/", "/_next/*", "/assets/*", "/favicon.ico", etc.
+  pathRewrite: (path, _req) => stripPreviewPrefix(path),
+  // Useful headers for asset caching; optional but nice to have
+  logLevel: process.env.NODE_ENV === "development" ? "debug" : "info",
+});
+
+// Mount once for everything under /preview/:id
+app.use(`${PREVIEW_PREFIX}/:id`, previewProxy);
+
+// Optionally: handle naked root (non-preview) routes for your own API/console if needed
+app.get("/", (_req, res) => {
+  res.status(200).send("MoFix Preview Proxy is running. Use /preview/:id to render.");
+});
+
+// --- create server & wire WS upgrades so Next.js dev/HMR works
+const server = http.createServer(app);
+
+// Forward WebSocket upgrades under /preview/:id to the proxy
+server.on("upgrade", (req, socket, head) => {
+  const url = req.url || "";
+  if (url.startsWith(`${PREVIEW_PREFIX}/`)) {
+    // Same rewrite rule is applied by http-proxy-middleware internally for ws as well.
+    (previewProxy as any)?.upgrade?.(req, socket, head);
+  } else {
+    socket.destroy();
+  }
+});
+
+// start
+server.listen(PORT, () => {
+  console.log(`[MoFix] Preview Proxy listening on http://localhost:${PORT}`);
+  console.log(`[MoFix] Proxying ${PREVIEW_PREFIX}/:id/*  -->  ${PREVIEW_TARGET}/*`);
+});
+
+/**
+ * ✅ How it works
+ *  - Incoming:  /preview/abc            -> Target sees: /
+ *  - Incoming:  /preview/abc/_next/...  -> Target sees: /_next/...
+ *  - Incoming:  /preview/abc/assets/x   -> Target sees: /assets/x
+ *  - Incoming:  /preview/abc/favicon.ico-> Target sees: /favicon.ico
+ *  - HMR/WS:    upgrade on /preview/:id/* forwarded to target with same rewrite
+ *
+ * If your preview renderer changes port, set PREVIEW_TARGET env (e.g., http://127.0.0.1:5173).
+ */

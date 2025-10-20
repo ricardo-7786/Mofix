@@ -1,0 +1,2 @@
+case,zip_path,http_code,bytes,elapsed_seconds,ok
+02,/Users/HOME/Downloads/MigrateHub/mofix_reports/zips/02.zip,200,96,0.014481,true

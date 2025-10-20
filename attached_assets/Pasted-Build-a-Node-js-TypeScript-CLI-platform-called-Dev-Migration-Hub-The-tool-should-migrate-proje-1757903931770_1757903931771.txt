@@ -1,0 +1,51 @@
+Build a Node.js + TypeScript CLI platform called "Dev Migration Hub".
+
+The tool should migrate projects from cloud IDEs/sandboxes (Replit, StackBlitz, CodeSandbox)
+to local VS Code environments and deployment targets (Vercel, Netlify, Docker, GitHub Actions).
+
+Requirements:
+
+1. Architecture
+- core/: detection, file I/O, planning, backup/rollback
+- frameworks/: adapters for each framework (next, vite, express, cra, nest, astro)
+- providers/: adapters for each source (replit, stacksblitz, codesandbox)
+- targets/: adapters for each target (vscode, vercel, netlify, docker, codespaces)
+- templates/: common (.gitignore, .vscode, .prettierrc, env.guide) + framework-specific templates
+
+2. CLI commands
+- dev-migrate --dry : preview planned changes
+- dev-migrate --backup : zip backup before apply
+- dev-migrate --force : overwrite existing files
+- dev-migrate --to vercel : include deployment config for target
+
+3. Core features
+- Framework detection (based on dependencies + config files)
+- Auto-fix package.json scripts (dev/build/start)
+- Env handling: accept Replit secrets manually and generate .env.local
+- Generate common files (.gitignore, .vscode/extensions.json, .prettierrc)
+- Copy framework-specific templates (next.config.ts, vite.config.ts, etc.)
+- Generate deployment configs (vercel.json, netlify.toml, Dockerfile, GitHub Actions YAML)
+- Dry-run report + checklist output
+- Rollback from backup on failure
+
+4. Extensibility
+- Plugin architecture for frameworks/providers/targets
+- Recipe file (JSON/TS) to define transformation rules
+- Output confidence score; if low, skip auto-apply and require user confirmation
+
+5. Output UX
+- Show Plan → Apply → Checklist in order
+- Log reasoning/source/remaining TODOs
+
+6. Dev environment
+- TypeScript + ts-node for dev run
+- Build with tsc
+- Test with vitest + memfs for sample Repl cases
+
+7. Built-in samples
+- Next.js (pages + app router)
+- Vite (JS + TS)
+- Express (JS + TS)
+- CRA, NestJS added in v1
+
+Please scaffold the project according to these requirements.
