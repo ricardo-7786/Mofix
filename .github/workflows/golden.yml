@@ -3,10 +3,10 @@ name: golden-suite
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main]                 # T1: PR 스모크
   schedule:
-    - cron: "0 20 * * *"  # T2: 매일 UTC 20시 (KST 05시)
-    - cron: "0 21 * * *"  # T3: 매일 UTC 21시 (KST 06시)
+    - cron: "0 20 * * *"             # T2: 매일 UTC 20시 (KST 05시)
+    - cron: "0 21 * * *"             # T3: 매일 UTC 21시 (KST 06시)
 
 concurrency:
   group: golden-${{ github.workflow }}-${{ github.ref }}
@@ -19,25 +19,41 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      TMPDIR: $RUNNER_TEMP
-      NPM_CONFIG_TMP: $RUNNER_TEMP
+      TMPDIR: '${{ runner.temp }}'
+      NPM_CONFIG_TMP: '${{ runner.temp }}'
+      NODE_ENV: 'ci'
       NODE_OPTIONS: '--max-old-space-size=4096'
+      GOLDEN_HEALTH_TIMEOUT_MS: '180000'
+      GOLDEN_MAX_INSTALL_MS: '240000'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_DISABLE_SWC_WASM: '1'
     steps:
       - uses: actions/checkout@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
+      # pnpm을 corepack으로 확실히 활성화
+      - name: Ensure pnpm is available
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm --version
+
       - run: npm ci
+
       - name: Run T1 suite
-        run: ZIP_DIR=golden/zips/T1 npx tsx golden/scripts/test-runner.ts
+        run: ZIP_DIR=golden/zips/T1 npm run golden:ci
+
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: golden-results-T1
-          path: 'golden/results/result-*.json'
+          path: golden/results/result-*.json
           if-no-files-found: ignore
           retention-days: 7
 
@@ -47,25 +63,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      TMPDIR: $RUNNER_TEMP
-      NPM_CONFIG_TMP: $RUNNER_TEMP
+      TMPDIR: '${{ runner.temp }}'
+      NPM_CONFIG_TMP: '${{ runner.temp }}'
+      NODE_ENV: 'ci'
       NODE_OPTIONS: '--max-old-space-size=4096'
+      GOLDEN_HEALTH_TIMEOUT_MS: '180000'
+      GOLDEN_MAX_INSTALL_MS: '240000'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_DISABLE_SWC_WASM: '1'
     steps:
       - uses: actions/checkout@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
+      - name: Ensure pnpm is available
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm --version
+
       - run: npm ci
+
       - name: Run T2 suite
-        run: ZIP_DIR=golden/zips/T2 npx tsx golden/scripts/test-runner.ts
+        run: ZIP_DIR=golden/zips/T2 npm run golden:ci
+
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: golden-results-T2
-          path: 'golden/results/result-*.json'
+          path: golden/results/result-*.json
           if-no-files-found: ignore
           retention-days: 7
 
@@ -75,24 +106,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      TMPDIR: $RUNNER_TEMP
-      NPM_CONFIG_TMP: $RUNNER_TEMP
+      TMPDIR: '${{ runner.temp }}'
+      NPM_CONFIG_TMP: '${{ runner.temp }}'
+      NODE_ENV: 'ci'
       NODE_OPTIONS: '--max-old-space-size=4096'
+      GOLDEN_HEALTH_TIMEOUT_MS: '180000'
+      GOLDEN_MAX_INSTALL_MS: '300000'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_DISABLE_SWC_WASM: '1'
     steps:
       - uses: actions/checkout@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
+      - name: Ensure pnpm is available
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm --version
+
       - run: npm ci
+
       - name: Run T3 suite
-        run: ZIP_DIR=golden/zips/T3 npx tsx golden/scripts/test-runner.ts
+        run: ZIP_DIR=golden/zips/T3 npm run golden:ci
+
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: golden-results-T3
-          path: 'golden/results/result-*.json'
+          path: golden/results/result-*.json
           if-no-files-found: ignore
           retention-days: 7
