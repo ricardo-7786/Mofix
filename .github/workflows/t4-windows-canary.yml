@@ -1,0 +1,62 @@
+name: T4 Windows Canary
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - "golden/scripts/**"
+      - "golden/zips/**"
+      - "package.json"
+      - ".github/workflows/t4-windows-canary.yml"
+
+jobs:
+  t4-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 속도 개선: npm 캐시 사용
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      # 긴 경로 허용 (윈도우 경로 길이 이슈 예방)
+      - name: Enable long paths (system)
+        run: git config --system core.longpaths true
+        continue-on-error: true
+
+      - name: Enable long paths (global fallback)
+        run: git config --global core.longpaths true
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Generate T4
+        run: npm run golden:gen:t4
+
+      - name: Run T4 only
+        env:
+          INSTALL_TIMEOUT_MS: "900000"
+          PREVIEW_TIMEOUT_MS: "600000"
+        run: npm run golden:run:t4
+
+      # (선택) 로그 압축/정리 – golden/results/logs 아래의 로그가 있을 경우만 작동
+      - name: Pack logs
+        if: always()
+        run: npx tsx golden/scripts/pack-logs.ts
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t4-windows-results
+          path: |
+            golden/results/*.json
+            golden/results/logs/**
