@@ -35,3 +35,11 @@ golden/results/
 
 # 필요: golden 테스트 입력 ZIP들은 추적 유지
 !golden/zips/**
+
+# macOS
+.DS_Store
+
+# build
+node_modules/
+golden/zips/
+

@@ -148,7 +148,7 @@ async function detectViteReactPluginName(
 }
 
 async function hasViteConfig(appRoot: string) {
-  const files = await fg(["vite.config.{ts,js,mjs,cjs,mts}"], { cwd: appRoot, dot: true });
+  const files = await fg(["vite.config.{ts,js,mjs,cjs}"], { cwd: appRoot, dot: true });
   return files.length > 0;
 }
 
@@ -225,10 +225,106 @@ const onlyIdx = argv.findIndex((a) => a === "--only");
 const onlyName = onlyIdx >= 0 ? argv[onlyIdx + 1] : undefined;
 const HEALTH_TIMEOUT = 120_000;
 
-/* ========================= Main =======================*/
+/* ========================= Security helpers (A~D) =======================*/
+function isSafePath(name: string) {
+  const n = name.replace(/\\/g, "/");
+  if (n.startsWith("/") || n.includes("../")) return false; // ZipSlip
+  return true;
+}
+
+const MAX_EXPANSION = 2000; // 압축 비정상 비율(의심)
+
+/** SecurityCheck + 타입가드 */
+type SecurityCheck =
+  | { ok: true }
+  | { ok: false; code: string; meta?: Record<string, any> };
+
+type SecurityFail = Extract<SecurityCheck, { ok: false }>;
+function isSecurityFail(v: SecurityCheck): v is SecurityFail {
+  return v.ok === false;
+}
+
+/** ZIP 엔트리 사전검증 (ZipSlip / ZipBomb / Nested archive) */
+function validateZipEntries(zip: AdmZip): SecurityCheck {
+  for (const entry of zip.getEntries()) {
+    const name = entry.entryName || "";
+
+    if (!isSafePath(name)) {
+      return { ok: false, code: "SECURITY_ZIPSLIP", meta: { entry: name } };
+    }
+
+    // ZipBomb (압축 비율)
+    const h: any = entry.header || {};
+    const sz = h.size; // compressed
+    const uz = h.sizeUncompressed; // uncompressed
+    if (sz && uz && uz / sz > MAX_EXPANSION) {
+      return { ok: false, code: "SECURITY_ZIP_BOMB", meta: { entry: name, ratio: uz / sz } };
+    }
+
+    // Nested archive (.zip/.tar/.gz/.tgz)
+    if (/\.(zip|tar|tgz|gz)$/i.test(name)) {
+      return { ok: false, code: "SECURITY_NESTED_ARCHIVE", meta: { entry: name } };
+    }
+  }
+  return { ok: true };
+}
+
+/** 안전 추출 (경로 탈출 방지) */
+async function safeExtractAll(zip: AdmZip, destDir: string) {
+  for (const e of zip.getEntries()) {
+    const target = path.resolve(destDir, e.entryName);
+    const rel = path.relative(destDir, target);
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
+      const err: any = new Error("ZipSlip extract blocked");
+      err.code = "SECURITY_ZIPSLIP";
+      err.entry = e.entryName;
+      throw err;
+    }
+    if (e.isDirectory) {
+      await fs.mkdirp(target);
+    } else {
+      await fs.mkdirp(path.dirname(target));
+      await fs.writeFile(target, e.getData());
+    }
+  }
+}
+
+/** 보안 사유로 즉시 실패 기록 */
+function pushSecurityFail(results: Result[], zipPath: string, code: string, meta?: Record<string, any>) {
+  results.push({
+    file: path.basename(zipPath),
+    framework: "unknown",
+    installMs: 0,
+    buildMs: 0,
+    runMs: 0,
+    healthMs: 0,
+    ok: false,
+    error: `${code}${meta ? " " + JSON.stringify(meta) : ""}`,
+    port: 0,
+    healthUrl: "",
+  });
+}
+
+/* ========================= Paths & Log helpers =======================*/
 const ZIP_DIR = process.env.ZIP_DIR ? path.resolve(process.env.ZIP_DIR) : path.resolve("golden/zips");
 const OUT_DIR = path.resolve("golden/results");
 await fs.ensureDir(OUT_DIR);
+
+// 결과 로그 보관 디렉터리
+const RESULTS_LOG_DIR = path.join(process.cwd(), "golden", "results", "logs");
+await fs.ensureDir(RESULTS_LOG_DIR);
+
+// 로그 복사 헬퍼
+function saveLog(srcPath: string | undefined, zipBaseName: string, tag: string) {
+  if (!srcPath) return;
+  try {
+    if (!fs.existsSync(srcPath)) return;
+    const stamped = new Date().toISOString().replace(/[:.]/g, "-");
+    const base = path.basename(srcPath);
+    const dst = path.join(RESULTS_LOG_DIR, `${stamped}-${zipBaseName}-${tag}-${base}`);
+    fs.copyFileSync(srcPath, dst);
+  } catch {}
+}
 
 const allZipFiles = await fg(["**/*.zip"], { cwd: ZIP_DIR, absolute: true });
 const zipFiles = onlyName ? allZipFiles.filter((p) => path.basename(p) === onlyName) : allZipFiles;
@@ -272,17 +368,73 @@ const results: Result[] = [];
 
 for (const zipPath of zipFiles) {
   const name = path.basename(zipPath);
+  const zipBaseName = name.replace(/\.zip$/i, "");
   console.log(pc.bold(`\n▶ ${name}`));
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "golden-"));
   let pid: number | undefined;
   let port = 0;
 
+  // 로그 경로 보관을 위해 변수 미리 선언
+  let devLogFile: string | undefined;
+  let previewLogFile: string | undefined;
+
   try {
-    const zip = new AdmZip(zipPath);
-    zip.extractAllTo(tmp, true);
+    /* ---------- (D) 손상 ZIP 명확 태깅 ---------- */
+    let zip: AdmZip;
+    try {
+      zip = new AdmZip(zipPath);
+    } catch (e: any) {
+      const msg = String(e?.message || "");
+      if (msg.includes("No END header")) {
+        console.error(pc.red("Corrupt zip (No END header)"));
+        pushSecurityFail(results, zipPath, "SECURITY_CORRUPT_ZIP", { message: msg });
+      } else {
+        pushSecurityFail(results, zipPath, "ZIP_OPEN_ERROR", { message: msg });
+      }
+      await fs.remove(tmp);
+      continue; // 다음 ZIP
+    }
+
+    /* ---------- (A/B/C) ZipSlip / ZipBomb / Nested Archive 사전 검증 ---------- */
+    const v: SecurityCheck = validateZipEntries(zip);
+    if (isSecurityFail(v)) {
+      const msg = v.meta ? " " + JSON.stringify(v.meta) : "";
+      console.error(pc.red(`${v.code}${msg}`));
+      pushSecurityFail(results, zipPath, v.code, v.meta);
+      await fs.remove(tmp);
+      continue; // 이 ZIP은 즉시 종료 (중복 결과 방지)
+    }
+
+    // 문제 없으면 실제 추출 (안전 추출)
+    try {
+      await safeExtractAll(zip, tmp);
+    } catch (err: any) {
+      if (err?.code === "SECURITY_ZIPSLIP") {
+        pushSecurityFail(results, zipPath, "SECURITY_ZIPSLIP", { entry: err?.entry });
+        await fs.remove(tmp);
+        continue;
+      }
+      throw err;
+    }
 
     const candidates = await fg(["**/package.json"], { cwd: tmp, absolute: true, dot: true });
-    if (!candidates.length) throw new Error("package.json not found");
+    if (!candidates.length) {
+      results.push({
+        file: name,
+        framework: "unknown",
+        installMs: 0,
+        buildMs: 0,
+        runMs: 0,
+        healthMs: 0,
+        ok: false,
+        error: "PACKAGE_JSON_NOT_FOUND",
+        port: 0,
+        healthUrl: "",
+      });
+      await fs.remove(tmp);
+      continue;
+    }
+
     const appRoot = path.dirname(candidates[0]);
     const det = await detectProject(appRoot);
 
@@ -294,6 +446,7 @@ for (const zipPath of zipFiles) {
     const healthPath = det.healthPath || "/";
     let healthUrl = `http://127.0.0.1:${port}${healthPath}`;
     const logFile = path.join(os.tmpdir(), `golden-dev-${port}.log`);
+    devLogFile = logFile;
     const envPrefix = `PORT=${port} HOST=127.0.0.1`;
 
     const pkg = await readJsonSafe(path.join(appRoot, "package.json"));
@@ -416,6 +569,7 @@ for (const zipPath of zipFiles) {
       const previewCmd = cfgFlag ? `${basePreview} -- ${cfgFlag}` : basePreview;
       const finalPreview = previewCmd + (extraArgs.length ? " -- " + extraArgs.join(" ") : "");
       const logFile2 = logFile.replace(/dev-(\d+)/, "preview-$1");
+      previewLogFile = logFile2;
 
       const basePath = await readViteBase(appRoot);
       const extraHealth: string[] = [
@@ -472,7 +626,7 @@ for (const zipPath of zipFiles) {
 
       // 1) 로그에서 실제 포트 1차 재탐지
       {
-        const guessed = await detectPortFromLog(logFile);
+        const guessed = await detectPortFromLog(devLogFile!);
         if (guessed && guessed !== port) {
           console.log(pc.yellow(`⚠️  Detected port mismatch: requested ${port}, actual ${guessed}`));
           port = guessed;
@@ -525,14 +679,14 @@ for (const zipPath of zipFiles) {
           `http://localhost:${port}${p}`,
         ]);
 
-        const r3 = await startAndWait(`${runner} run dev`, logFile, envPrefix2, appRoot, altHealth, 25_000, extra);
+        const r3 = await startAndWait(`${runner} run dev`, devLogFile!, envPrefix2, appRoot, altHealth, 25_000, extra);
         pid = r3.pid;
         ok = r3.ok;
         healthMs += r3.healthMs;
         healthUrl = altHealth;
 
         if (!ok) {
-          const guessed2 = await detectPortFromLog(logFile);
+          const guessed2 = await detectPortFromLog(devLogFile!);
           if (guessed2 && guessed2 !== port) {
             console.log(pc.yellow(`⚠️  Detected port mismatch after restart: requested ${port}, actual ${guessed2}`));
             port = guessed2;
@@ -547,7 +701,7 @@ for (const zipPath of zipFiles) {
           }
           if (!ok) {
             try {
-              const tail = (await fs.readFile(logFile, "utf8")).split("\n").slice(-80).join("\n");
+              const tail = (await fs.readFile(devLogFile!, "utf8")).split("\n").slice(-80).join("\n");
               console.log(pc.gray("\n--- log tail ---\n" + tail + "\n----------------\n"));
             } catch {}
           }
@@ -588,7 +742,7 @@ for (const zipPath of zipFiles) {
           console.log(pc.yellow(`Retry with plain process: ${isBin ? "node bin/www" : cmdTsx}`));
           let r4 = await startAndWait(
             cmdTsx,
-            logFile,
+            devLogFile!,
             envPrefix3,
             appRoot,
             `http://127.0.0.1:${port}/`,
@@ -605,7 +759,7 @@ for (const zipPath of zipFiles) {
           // ❗ 실패 시: CJS(require shim) → ESM(ts-node/esm) → ESM+require shim(최후)
           if (!ok) {
             let tailTxt = "";
-            try { tailTxt = await fs.readFile(logFile, "utf8"); } catch {}
+            try { tailTxt = await fs.readFile(devLogFile!, "utf8"); } catch {}
             const needsRetry =
               /require is not defined in ES module scope/i.test(tailTxt) ||
               /Must use import to load ES Module/i.test(tailTxt) ||
@@ -633,7 +787,7 @@ for (const zipPath of zipFiles) {
               console.log(pc.yellow(`Retry with CJS transpile (require shim): ${cjsShimCmd}`));
               let r5 = await startAndWait(
                 cjsShimCmd,
-                logFile,
+                devLogFile!,
                 envPrefix3,
                 appRoot,
                 `http://127.0.0.1:${port}/`,
@@ -660,7 +814,7 @@ for (const zipPath of zipFiles) {
                 console.log(pc.yellow(`Retry with ESM loader (ts-node/esm): ${esmCmd}`));
                 r5 = await startAndWait(
                   esmCmd,
-                  logFile,
+                  devLogFile!,
                   envPrefix3,
                   appRoot,
                   `http://127.0.0.1:${port}/`,
@@ -675,7 +829,7 @@ for (const zipPath of zipFiles) {
                 healthMs += r5.healthMs;
               }
 
-              // 4-3) 최후: ESM + require shim (createRequire로 글로벌 require 제공)
+              // 4-3) 최후: ESM + require shim
               if (!ok) {
                 await safeKillPort(port);
                 safeKillPid(pid);
@@ -684,7 +838,6 @@ for (const zipPath of zipFiles) {
                   `TS_NODE_TRANSPILE_ONLY=1 ` +
                   `TS_NODE_COMPILER_OPTIONS='{\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"esModuleInterop\":true,\"allowSyntheticDefaultImports\":true}' `;
 
-                // Node 22의 경고 회피는 필요시 --import 방식으로 바꿀 수 있으나, 여기선 -e 인라인이 간단.
                 const esmShimCmd =
                   `${tsNodeEsmEnv2}` +
                   `node --loader ts-node/esm ` +
@@ -692,11 +845,11 @@ for (const zipPath of zipFiles) {
                   `const entry='${absEntry}'; process.chdir(path.dirname(entry)); ` +
                   `globalThis.require = createRequire(pathToFileURL(entry).href); ` +
                   `await import(pathToFileURL(entry).href)"`;
-                  
+
                 console.log(pc.yellow(`Retry with ESM loader + require shim: ${esmShimCmd}`));
                 const r6 = await startAndWait(
                   esmShimCmd,
-                  logFile,
+                  devLogFile!,
                   envPrefix3,
                   appRoot,
                   `http://127.0.0.1:${port}/`,
@@ -714,7 +867,7 @@ for (const zipPath of zipFiles) {
           }
 
           if (!ok) {
-            const guessed3 = await detectPortFromLog(logFile);
+            const guessed3 = await detectPortFromLog(devLogFile!);
             if (guessed3 && guessed3 !== port) {
               console.log(pc.yellow(`⚠️  Detected port mismatch (plain): requested ${port}, actual ${guessed3}`));
               port = guessed3;
@@ -729,7 +882,7 @@ for (const zipPath of zipFiles) {
             }
             if (!ok) {
               try {
-                const tail = (await fs.readFile(logFile, "utf8")).split("\n").slice(-120).join("\n");
+                const tail = (await fs.readFile(devLogFile!, "utf8")).split("\n").slice(-120).join("\n");
                 console.log(pc.gray("\n--- log tail ---\n" + tail + "\n----------------\n"));
               } catch {}
             }
@@ -742,9 +895,19 @@ for (const zipPath of zipFiles) {
     /* ---- /Express fallback ---- */
 
     results.push({ file: name, framework: det.framework, installMs, buildMs, runMs, healthMs, ok, port, healthUrl });
+
+    // ===== 결과 로그 복사 =====
+    saveLog(devLogFile, zipBaseName, "dev");
+    saveLog(previewLogFile, zipBaseName, "preview");
+
     await safeKillPort(port);
     safeKillPid(pid);
+    await fs.remove(tmp);
   } catch (e: any) {
+    // 실패 시에도 현재까지의 dev/preview 로그를 최대한 보관
+    saveLog(devLogFile, zipBaseName, "dev");
+    saveLog(previewLogFile, zipBaseName, "preview");
+
     results.push({
       file: path.basename(zipPath),
       framework: "unknown",
@@ -760,6 +923,7 @@ for (const zipPath of zipFiles) {
     console.error(pc.red(String(e)));
     await safeKillPort(port);
     safeKillPid(pid);
+    await fs.remove(tmp);
   }
 }
 
@@ -775,7 +939,7 @@ for (const r of results) {
   const status = r.ok ? pc.green("OK") : pc.red("FAIL");
   if (!r.ok) fail++;
   console.log(
-    `${r.file}  ${pc.dim(r.framework)}  ${status}  install=${r.installMs}ms build=${r.buildMs}ms run=${r.runMs}ms health=${r.healthMs}ms port=${r.port} ${r.healthUrl}`
+    `${r.file}  ${pc.dim(r.framework)}  ${status}  install=${r.installMs}ms build=${r.buildMs}ms run=${r.runMs}ms health=${r.healthMs}ms port=${r.port} ${r.healthUrl}${r.error ? "  " + pc.dim(r.error) : ""}`
   );
 }
 console.log(pc.bold(`\nTotal: ${results.length}, OK: ${results.length - fail}, FAIL: ${fail}`));
