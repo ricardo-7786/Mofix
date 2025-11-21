@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",                 // ★ 고치기
+    "moduleResolution": "NodeNext",       // Node의 ESM/TS 해석과 일치
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": ["node"],                    // ★ Node 내장 모듈 타입
+    "baseUrl": "."
+  },
+  "include": ["golden/**/*.ts", "scripts/**/*.ts", "packages/**/*.ts"]
+}

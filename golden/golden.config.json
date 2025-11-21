@@ -1,0 +1,6 @@
+{
+  "overrides": {
+    "express-native-deps.zip": { "port": 4000, "healthPath": "/api/ping" },
+    "next-ws-client.zip":     { "port": 3001, "healthPath": "/" }
+  }
+}

@@ -1,0 +1,233 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: golden-suite
+
+on:
+  pull_request:
+    branches: [main]                 # T1: PR 스모크
+  schedule:
+    - cron: "0 20 * * *"             # T2: 매일 UTC 20시 (KST 05시)
+    - cron: "0 21 * * *"             # T3: 매일 UTC 21시 (KST 06시)
+    - cron: "0 22 * * *"             # T4: 매일 UTC 22시 (KST 07시, 대용량)
+
+concurrency:
+  group: golden-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  t1:
+    name: "T1 — PR 스모크"
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TMPDIR: ${{ runner.temp }}
+      NPM_CONFIG_TMP: ${{ runner.temp }}
+      NODE_ENV: 'ci'
+      NODE_OPTIONS: '--max-old-space-size=4096'
+      GOLDEN_HEALTH_TIMEOUT_MS: '180000'
+      GOLDEN_MAX_INSTALL_MS: '240000'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_DISABLE_SWC_WASM: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # pnpm을 corepack으로 확실히 활성화
+      - name: Ensure pnpm is available
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm --version
+
+      - run: npm ci
+
+      - name: Run T1 suite
+        run: ZIP_DIR=golden/zips/T1 npm run golden:ci
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-results-T1
+          path: golden/results/result-*.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  t2:
+    name: "T2 — 일일 리그레션"
+    if: github.event_name == 'schedule' && github.event.schedule == '0 20 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TMPDIR: ${{ runner.temp }}
+      NPM_CONFIG_TMP: ${{ runner.temp }}
+      NODE_ENV: 'ci'
+      NODE_OPTIONS: '--max-old-space-size=4096'
+      GOLDEN_HEALTH_TIMEOUT_MS: '180000'
+      GOLDEN_MAX_INSTALL_MS: '240000'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_DISABLE_SWC_WASM: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Ensure pnpm is available
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm --version
+
+      - run: npm ci
+
+      - name: Run T2 suite
+        run: ZIP_DIR=golden/zips/T2 npm run golden:ci
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-results-T2
+          path: golden/results/result-*.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  t3:
+    name: "T3 — 야간 풀코퍼스"
+    if: github.event_name == 'schedule' && github.event.schedule == '0 21 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TMPDIR: ${{ runner.temp }}
+      NPM_CONFIG_TMP: ${{ runner.temp }}
+      NODE_ENV: 'ci'
+      NODE_OPTIONS: '--max-old-space-size=4096'
+      GOLDEN_HEALTH_TIMEOUT_MS: '180000'
+      GOLDEN_MAX_INSTALL_MS: '300000'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_DISABLE_SWC_WASM: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Ensure pnpm is available
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm --version
+
+      - run: npm ci
+
+      - name: Run T3 suite
+        run: ZIP_DIR=golden/zips/T3 npm run golden:ci
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-results-T3
+          path: golden/results/result-*.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # 🔹 macOS에서 한 번 더 돌리는 잡 (pnpm/action-setup 사용)
+  t3-macos:
+    name: "T3 — 야간 풀코퍼스 (macOS)"
+    if: github.event_name == 'schedule' && github.event.schedule == '0 21 * * *'
+    runs-on: macos-latest
+    timeout-minutes: 120
+    env:
+      TMPDIR: ${{ runner.temp }}
+      NPM_CONFIG_TMP: ${{ runner.temp }}
+      NODE_ENV: 'ci'
+      NODE_OPTIONS: '--max-old-space-size=6144'
+      GOLDEN_HEALTH_TIMEOUT_MS: '180000'
+      GOLDEN_MAX_INSTALL_MS: '300000'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_DISABLE_SWC_WASM: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # ✅ macOS에서 pnpm 깔기 (바이너리 보장)
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run T3 suite (macOS)
+        run: ZIP_DIR=golden/zips/T3 npm run golden:ci
+
+      - name: Upload results (macOS)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-results-T3-macos
+          path: golden/results/result-*.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  t4:
+    name: "T4 — 대용량/경계치 테스트"
+    if: github.event_name == 'schedule' && github.event.schedule == '0 22 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      TMPDIR: ${{ runner.temp }}
+      NPM_CONFIG_TMP: ${{ runner.temp }}
+      NODE_ENV: 'ci'
+      # 대용량 zip 대비해서 메모리 조금 더 여유
+      NODE_OPTIONS: '--max-old-space-size=6144'
+      GOLDEN_HEALTH_TIMEOUT_MS: '300000'
+      GOLDEN_MAX_INSTALL_MS: '480000'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_DISABLE_SWC_WASM: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Ensure pnpm is available
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm --version
+
+      - run: npm ci
+
+      - name: Run T4 suite
+        run: ZIP_DIR=golden/zips/T4 npm run golden:ci
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-results-T4
+          path: golden/results/result-*.json
+          if-no-files-found: ignore
+          retention-days: 7

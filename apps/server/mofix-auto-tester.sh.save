@@ -1,0 +1,79 @@
+
+set -euo pipefail
+
+INPUT_DIR=""
+SERVER_URL=""
+OUT_DIR="./mofix_reports"
+PATTERN=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --input) INPUT_DIR="$2"; shift 2;;
+    --server) SERVER_URL="$2"; shift 2;;
+    --pattern) PATTERN="$2"; shift 2;;
+    --out) OUT_DIR="$2"; shift 2;;
+    -h|--help) grep -E '^# ' "$0" | sed 's/^# //'; exit 0;;
+    *) echo "Unknown arg: $1"; exit 1;;
+  esac
+done
+
+if [[ -z "${INPUT_DIR}" || -z "${SERVER_URL}" ]]; then
+  echo "Usage: $0 --input <dir> --server <url> [--pattern '*/'] [--out <dir>]"
+  exit 1
+fi
+
+if [[ ! -d "${INPUT_DIR}" ]]; then
+  echo "Input dir not found: ${INPUT_DIR}"
+  exit 1
+fi
+
+mkdir -p "${OUT_DIR}"/{zips,responses,logs}
+SUMMARY_CSV="${OUT_DIR}/summary.csv"
+echo "case,zip_path,http_code,bytes,elapsed_seconds,ok" > "${SUMMARY_CSV}"
+
+CASES=$(find "${INPUT_DIR}" -mindepth 1 -maxdepth 1 -type d | sort)
+TOTAL=$(printf "%s\n" "$CASES" | sed '/^$/d' | wc -l | tr -d ' ')
+
+if [[ "$TOTAL" -eq 0 ]]; then
+  echo "No subfolders found in ${INPUT_DIR}"
+  exit 1
+fi
+
+echo "Found ${TOTAL} case(s). Starting uploads to ${SERVER_URL} ..."
+START_TS=$(date +%s)
+
+i=0
+for case_dir in $CASES; do
+  case_name="$(basename "$case_dir")"
+  if [[ -n "${PATTERN}" ]]; then
+    if ! [[ "${case_name}" == ${PATTERN} ]]; then
+      continue
+    fi
+  fi
+
+  i=$((i+1))
+  zip_path="${OUT_DIR}/zips/${case_name}.zip"
+  resp_path="${OUT_DIR}/responses/${case_name}.json"
+
+  echo "[$i/${TOTAL}] Zipping ${case_name} -> ${zip_path}"
+  (cd "${case_dir}" && zip -qr "${zip_path}" .)
+
+  echo "[$i/${TOTAL}] Uploading ${zip_path} -> ${SERVER_URL}/upload"
+  tmp_resp="${resp_path}.tmp"
+  http_code=$(curl -sS -w "%{http_code}" -o "${tmp_resp}" -F "file=@${zip_path}" "${SERVER_URL}/upload" || echo "000")
+
+  if command -v jq >/dev/null 2>&1 && jq . >/dev/null 2>&1 < "${tmp_resp}"; then
+    jq . < "${tmp_resp}" > "${resp_path}"
+    rm -f "${tmp_resp}"
+  else
+    mv "${tmp_resp}" "${resp_path}"
+  fi
+
+  bytes=$(wc -c < "${resp_path}" | tr -d ' ')
+  ok="false"
+  if [[ "${http_code}" == "200" || "${http_code}" == "201" ]]; then
+    ok="true"
+  fi
+
+  echo "${case_name},${zip_path},${http_code},${bytes},,${ok}" >> "${SUMMARY_CSV}"
+  echo "[$i/${TOTAL}] Done: case=${case_name}, http=${http_code},

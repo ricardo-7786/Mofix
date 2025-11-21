@@ -1,0 +1,16 @@
+{
+  "name": "mofix-verify",
+  "version": "0.1.6",
+  "description": "MoFix local verify CLI (npm install + npm run build auto execution)",
+  "main": "dist/index.js",
+  "bin": {
+    "mofix-verify": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

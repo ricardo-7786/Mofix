@@ -1,0 +1,70 @@
+# =========================
+# 🔧 기본 빌드/캐시/패키지
+# =========================
+node_modules/
+dist/
+build/
+.next/
+coverage/
+*.log
+
+# =========================
+# 🧪 Golden / CI / Preview temp
+# =========================
+golden/results/
+apps/web/temp/
+**/temp/
+**/.next/
+**/dist/
+**/node_modules/
+
+# =========================
+# 📦 결과 / 아티팩트 대용량 파일
+# =========================
+*.zip
+*.tar
+*.tgz
+*.rar
+
+# =========================
+# 🗂 로컬 임시 / 결과물 (레포에는 넣지 않음)
+# =========================
+apps/**/temp/
+apps/**/server/data/uploads/
+apps/web/temp/
+mofix_reports/zips/
+
+<<<<<<< HEAD
+# 필요: golden 테스트 입력 ZIP들은 추적 유지
+!golden/zips/**
+
+# macOS
+.DS_Store
+
+# build
+node_modules/
+golden/zips/
+=======
+# =========================
+# 🚫 제외 파일 (시스템, 이력, 환경)
+# =========================
+.DS_Store
+.history/
+apps/web/.env
+apps/web/.env.local
+
+# =========================
+# 🧩 T4 large test artifacts (local only)
+# =========================
+payload-*.bin
+golden/zips/T4/
+t4-app-300/
+work-t4-300/
+work-t4-1g/
+work-t4-2g/
+
+# =========================
+# ✅ Golden 테스트 입력 ZIP은 추적 유지
+# =========================
+>>>>>>> ab7bb54 (chore: finalize T4 setup, update golden.yml & .gitignore, clean local artifacts)
+

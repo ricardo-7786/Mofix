@@ -1,0 +1,46 @@
+{
+  "name": "mofix-vscode",
+  "displayName": "MoFix",
+  "description": "Verify builds of MoFix-optimized projects directly from VS Code.",
+  "version": "0.0.1",
+  "publisher": "mofix",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./tsconfig.json",
+    "watch": "tsc -p ./tsconfig.json -w",
+    "package": "vsce package",
+    "lint": "echo \"no lint yet\"",
+    "test": "echo \"no tests yet\""
+  },
+
+  "activationEvents": [
+    "onCommand:mofix.verifyBuild",
+    "onCommand:mofix.openReview"
+  ],
+
+  "contributes": {
+    "commands": [
+      {
+        "command": "mofix.verifyBuild",
+        "title": "MoFix: Verify Build"
+      },
+      {
+        "command": "mofix.openReview",
+        "title": "MoFix: Write a Review"
+      }
+    ]
+  },
+
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.6.3",
+    "vsce": "^2.15.0"
+  }
+}

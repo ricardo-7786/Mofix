@@ -1,0 +1,15 @@
+{
+  "id": "T4",
+  "desc": "대용량/경계치 테스트 (300MB~2GB zip)",
+  "inputs": [
+    "golden/zips/T4/mofix-test-300MB.zip",
+    "golden/zips/T4/mofix-test-1GB.zip",
+    "golden/zips/T4/mofix-test-2GB.zip"
+  ],
+  "expect": {
+    "installMs<": 600000,
+    "buildMs<": 600000,
+    "runMs<": 600000
+  }
+}
+

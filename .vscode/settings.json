@@ -1,0 +1,22 @@
+{
+    "typescript.tsdk": "node_modules/typescript/lib",
+  
+    "yaml.customTags": [
+      "!Ref",
+      "!Sub",
+      "!GetAtt",
+      "!Join",
+      "!If",
+      "!Equals",
+      "!Not",
+      "!And",
+      "!Or",
+      "!FindInMap",
+      "!Select",
+      "!Split",
+      "!ImportValue",
+      "!Condition",
+      "tag:yaml.org,2002:js/expr"
+    ]
+  }
+  
